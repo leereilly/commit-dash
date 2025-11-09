@@ -346,13 +346,24 @@ class CommitRunnerScene extends Phaser.Scene {
             tile.tileX = x; // Store original x position for wave calculation
             tile.tileY = y; // Store original y position for wave calculation
         } else {
-            // Create background tile (non-collidable) using graphics
-            const graphics = this.add.graphics();
-            graphics.fillStyle(COLORS.BACKGROUND, 1);
-            graphics.fillRect(x, y, GRID.TILE_SIZE, GRID.TILE_SIZE);
+            // Create background tile (non-collidable) as a sprite so it scrolls properly
+            // Generate texture for gray background tile if not already created
+            if (!this.textures.exists('grayTile')) {
+                const graphics = this.add.graphics();
+                graphics.fillStyle(COLORS.BACKGROUND, 1);
+                graphics.fillRect(0, 0, GRID.TILE_SIZE, GRID.TILE_SIZE);
+                graphics.generateTexture('grayTile', GRID.TILE_SIZE, GRID.TILE_SIZE);
+                graphics.destroy();
+            }
             
-            // Add to tiles group for cleanup
-            this.tilesGroup.add(graphics);
+            // Create as a regular sprite (not physics body, just visual)
+            const tile = this.add.sprite(x, y, 'grayTile');
+            tile.setOrigin(0, 0);
+            tile.setDisplaySize(GRID.TILE_SIZE, GRID.TILE_SIZE);
+            tile.setDepth(0); // Put gray tiles behind everything
+            
+            // Add to tiles group for scrolling and cleanup
+            this.tilesGroup.add(tile);
         }
     }
 
@@ -692,21 +703,8 @@ class CommitRunnerScene extends Phaser.Scene {
         
         const wasGrounded = this.player.isGrounded;
         
-        // Check if player is standing on the ground or on an obstacle
-        // Player is grounded if touching the bottom or if body is touching an obstacle from above
-        if (this.player.y >= groundLevel && this.player.body.velocity.y >= 0) {
-            this.player.y = groundLevel;
-            this.player.setVelocityY(0);
-            
-            // Only disable double jump if transitioning from air to ground
-            if (!wasGrounded) {
-                this.player.isGrounded = true;
-                this.player.canDoubleJump = false; // Disable double jump once landed
-                this.player.isRotating = true;
-            } else {
-                this.player.isGrounded = true;
-            }
-        } else if (this.player.body.touching.down || this.player.body.blocked.down) {
+        // Check if player is standing on an obstacle (green tiles)
+        if (this.player.body.touching.down || this.player.body.blocked.down) {
             // Player is standing on top of an obstacle
             // Only disable double jump if transitioning from air to ground
             if (!wasGrounded) {
@@ -716,12 +714,30 @@ class CommitRunnerScene extends Phaser.Scene {
             } else {
                 this.player.isGrounded = true;
             }
+        } else if (this.player.y >= groundLevel && this.player.body.velocity.y >= 0) {
+            // Player has fallen to the base ground level (for empty columns)
+            this.player.y = groundLevel;
+            this.player.setVelocityY(0);
+            
+            // Only disable double jump if transitioning from air to ground
+            if (!wasGrounded) {
+                this.player.isGrounded = true;
+                this.player.canDoubleJump = false;
+                this.player.isRotating = true;
+            } else {
+                this.player.isGrounded = true;
+            }
         } else if (this.player.body.velocity.y < 0) {
             // Player is moving upward (jumping)
             this.player.isGrounded = false;
-        } else if (!this.player.body.touching.down && !this.player.body.blocked.down && this.player.y < groundLevel - 5) {
-            // Player is in the air (not touching anything and not at ground level)
+        } else {
+            // Player is in the air
             this.player.isGrounded = false;
+        }
+        
+        // Game over if player falls way below the screen
+        if (this.player.y > screenHeight + 100) {
+            this.triggerGameOver();
         }
     }
 }
@@ -732,7 +748,7 @@ const config = {
     width: 800,
     height: 300,
     parent: 'game-container',
-    backgroundColor: '#ebedf0', // Light gray background like contribution graph
+    backgroundColor: '#ffffff', // White background to see the light gray tiles
     physics: {
         default: 'arcade',
         arcade: {
