@@ -190,19 +190,7 @@ class CommitRunnerScene extends Phaser.Scene {
         this.restartText.setVisible(false);
         this.restartText.setDepth(100);
         
-        // Set up overlap detection for side collisions only (not using collider at all)
-        this.physics.add.overlap(
-            this.player,
-            this.obstaclesGroup,
-            this.handleCollision,
-            (player, obstacle) => {
-                // Only process overlap for obstacles, not gray tiles
-                return obstacle.isObstacle === true && obstacle.tileType === 'GREEN_OBSTACLE';
-            },
-            this
-        );
-        
-        // NO COLLIDER - we handle all physics manually
+        // NO overlap/collider - we handle ALL collision manually in checkGrounded()
         
         // Track consecutive empty columns
         this.consecutiveEmptyColumns = 0;
@@ -686,19 +674,11 @@ class CommitRunnerScene extends Phaser.Scene {
     handleJump() {
         const deltaSeconds = this.game.loop.delta / 1000;
         
-        // Debug at the very start
+        // Check for JustDown once and reuse
         const justDown = Phaser.Input.Keyboard.JustDown(this.spaceKey);
-        if (justDown) {
-            console.log('=== SPACE PRESSED ===');
-            console.log('Grounded:', this.player.isGrounded);
-            console.log('isChargingJump:', this.isChargingJump);
-            console.log('jumpCharge:', this.jumpCharge);
-            console.log('jumpHoldStartTime:', this.jumpHoldStartTime);
-        }
         
         // === CHARGE JUMP: SQUASHING PHASE ===
         if (this.isChargingJump && this.spaceKey.isDown && this.player.isGrounded) {
-            console.log('Charging/Squashing');
             this.chargeJumpTime += deltaSeconds;
             
             // Cap at max charge time
@@ -716,7 +696,6 @@ class CommitRunnerScene extends Phaser.Scene {
         
         // === CHARGE JUMP: LAUNCH PHASE ===
         if (this.isChargingJump && Phaser.Input.Keyboard.JustUp(this.spaceKey)) {
-            console.log('Launch charge jump!');
             const chargeRatio = Math.min(this.chargeJumpTime / GAME_CONFIG.CHARGE_JUMP_MAX_TIME, 1);
             
             // Calculate jump strength based on how long space was held
@@ -747,7 +726,6 @@ class CommitRunnerScene extends Phaser.Scene {
         // === DOUBLE JUMP (IN AIR) ===
         if (justDown && !this.player.isGrounded && 
             !this.isChargingJump && this.jumpCharge >= GAME_CONFIG.JUMP_CHARGE_COST) {
-            console.log('Double jump!');
             // Double jump - costs 50% energy
             this.player.setVelocityY(GAME_CONFIG.JUMP_VELOCITY);
             this.player.setVelocityX(0);
@@ -757,21 +735,16 @@ class CommitRunnerScene extends Phaser.Scene {
         
         // === GROUND JUMPS: START TRACKING HOLD ===
         if (justDown && this.player.isGrounded && !this.isChargingJump) {
-            console.log('>>> Ground jump section hit! Charge:', this.jumpCharge, 'Max:', GAME_CONFIG.JUMP_CHARGE_MAX);
-            
             // Start tracking when space was pressed - DON'T jump yet
             this.jumpHoldStartTime = this.time.now;
             
             // If we DON'T have 100% charge, jump immediately
             if (this.jumpCharge < GAME_CONFIG.JUMP_CHARGE_MAX) {
-                console.log('>>> Regular jump (not full charge)');
                 this.player.setVelocityY(GAME_CONFIG.JUMP_VELOCITY);
                 this.player.setVelocityX(0);
                 this.player.isGrounded = false;
                 this.player.isRotating = false;
                 this.jumpHoldStartTime = null;
-            } else {
-                console.log('>>> Have full charge, waiting...');
             }
             return;
         }
@@ -782,9 +755,7 @@ class CommitRunnerScene extends Phaser.Scene {
             
             // If they released quickly - regular jump
             if (Phaser.Input.Keyboard.JustUp(this.spaceKey)) {
-                console.log('>>> Space released. Hold duration:', holdDuration);
-                if (holdDuration < 150) { // Reduced from 200ms to 150ms for faster response
-                    console.log('>>> Regular jump (quick tap)');
+                if (holdDuration < 100) { // Quick tap = regular jump
                     this.player.setVelocityY(GAME_CONFIG.JUMP_VELOCITY);
                     this.player.setVelocityX(0);
                     this.player.isGrounded = false;
@@ -795,8 +766,7 @@ class CommitRunnerScene extends Phaser.Scene {
             }
             
             // If they held past threshold - start charging
-            if (this.spaceKey.isDown && holdDuration >= 150) { // Also reduced to 150ms
-                console.log('>>> Starting charge jump (held past threshold)');
+            if (this.spaceKey.isDown && holdDuration >= 100) {
                 this.isChargingJump = true;
                 this.chargeJumpTime = 0;
                 this.jumpHoldStartTime = null;
