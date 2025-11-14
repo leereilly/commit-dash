@@ -51,7 +51,13 @@ const GAME_CONFIG = {
     GAME_OVER_BOUNDARY: -GRID.TILE_SIZE,   // X position that triggers game over (completely off screen)
     JUMP_CHARGE_MAX: 100,    // Maximum jump charge
     JUMP_CHARGE_COST: 50,    // Charge cost per jump
-    JUMP_CHARGE_RATE: 25     // Charge recovery per second when grounded
+    JUMP_CHARGE_RATE: 25,    // Charge recovery per second when grounded
+    CHARGE_JUMP_THRESHOLD: 0.25, // Minimum time (seconds) to hold space for charge jump
+    CHARGE_JUMP_MAX_TIME: 1.5, // Maximum charge time in seconds
+    CHARGE_JUMP_MIN_VELOCITY: -400, // Minimum jump velocity
+    CHARGE_JUMP_MAX_VELOCITY: -700, // Maximum jump velocity when fully charged
+    CHARGE_JUMP_HORIZONTAL_VELOCITY: 150, // Horizontal velocity boost when fully charged
+    CHARGE_JUMP_SQUASH_HEIGHT: 0.1 // Squash to 10% of original height
 };
 
 class CommitRunnerScene extends Phaser.Scene {
@@ -68,6 +74,11 @@ class CommitRunnerScene extends Phaser.Scene {
         this.jumpCharge = GAME_CONFIG.JUMP_CHARGE_MAX; // Start with full charge
         this.jumpsUsed = 0; // Track consecutive jumps
         this.colorWaveTime = 0; // Track time for color wave animation
+        
+        // Charge jump state
+        this.isChargingJump = false;
+        this.chargeJumpTime = 0;
+        this.jumpHoldStartTime = null; // Track when space was first pressed
         
         // Load high score from cookie
         this.loadHighScore();
@@ -112,6 +123,38 @@ class CommitRunnerScene extends Phaser.Scene {
         );
         this.highScoreText.setOrigin(1, 0); // Anchor to top-right
         this.highScoreText.setDepth(100);
+        
+        // Jump charge display (left side, below score)
+        const chargeBarWidth = 100;
+        const chargeBarHeight = 20;
+        const chargeBarX = 16;
+        const chargeBarY = 50;
+        
+        // Background bar
+        this.chargeBarBg = this.add.graphics();
+        this.chargeBarBg.fillStyle(0x666666, 1);
+        this.chargeBarBg.fillRect(chargeBarX, chargeBarY, chargeBarWidth, chargeBarHeight);
+        this.chargeBarBg.setDepth(100);
+        
+        // Charge bar fill
+        this.chargeBar = this.add.graphics();
+        this.chargeBar.setDepth(101);
+        
+        // Charge text
+        this.chargeText = this.add.text(chargeBarX, chargeBarY + chargeBarHeight + 4, 'Jump Charge: 100%', {
+            fontSize: '14px',
+            fill: '#000000',
+            fontFamily: 'monospace',
+            backgroundColor: 'rgba(255, 255, 255, 0.8)',
+            padding: { x: 4, y: 2 }
+        });
+        this.chargeText.setDepth(100);
+        
+        // Store charge bar dimensions for updates
+        this.chargeBarX = chargeBarX;
+        this.chargeBarY = chargeBarY;
+        this.chargeBarWidth = chargeBarWidth;
+        this.chargeBarHeight = chargeBarHeight;
         
         // Game over text (hidden initially)
         this.gameOverText = this.add.text(
@@ -430,6 +473,33 @@ class CommitRunnerScene extends Phaser.Scene {
     }
 
     /**
+     * Update the jump charge bar display
+     */
+    updateChargeBar() {
+        // Clear and redraw the charge bar
+        this.chargeBar.clear();
+        
+        const chargePercent = this.jumpCharge / GAME_CONFIG.JUMP_CHARGE_MAX;
+        const fillWidth = this.chargeBarWidth * chargePercent;
+        
+        // Color based on charge level
+        let color;
+        if (chargePercent >= 1.0) {
+            color = 0x30a14e; // Full charge - dark green
+        } else if (chargePercent >= 0.5) {
+            color = 0x40c463; // 50%+ - light green
+        } else {
+            color = 0xff6b6b; // Below 50% - red
+        }
+        
+        this.chargeBar.fillStyle(color, 1);
+        this.chargeBar.fillRect(this.chargeBarX, this.chargeBarY, fillWidth, this.chargeBarHeight);
+        
+        // Update text
+        this.chargeText.setText(`Jump Charge: ${Math.floor(chargePercent * 100)}%`);
+    }
+
+    /**
      * Determine if collision should be processed (only for vertical collisions)
      * @param {Phaser.GameObjects.Sprite} player
      * @param {Phaser.GameObjects.GameObject} obstacle
@@ -527,12 +597,16 @@ class CommitRunnerScene extends Phaser.Scene {
         this.jumpCharge = GAME_CONFIG.JUMP_CHARGE_MAX;
         this.jumpsUsed = 0;
         this.colorWaveTime = 0; // Reset color wave
+        this.isChargingJump = false; // Reset charge jump state
+        this.chargeJumpTime = 0;
         
         // Reset player position
         this.player.setPosition(GAME_CONFIG.PLAYER_START_X, this.cameras.main.centerY);
         this.player.setVelocity(0, 0);
         this.player.angle = 0; // Reset rotation
         this.player.isRotating = false;
+        this.player.setDisplaySize(GRID.TILE_SIZE, GRID.TILE_SIZE); // Reset size
+        this.player.setScale(1, 1); // Reset scale
         this.player.targetRotation = 0;
         this.player.canDoubleJump = false;
         
@@ -567,6 +641,9 @@ class CommitRunnerScene extends Phaser.Scene {
         
         // Update obstacle colors with sine wave
         this.updateObstacleColors();
+        
+        // Update charge bar display
+        this.updateChargeBar();
         
         // Check if player is on the ground FIRST (before handling jumps)
         this.checkGrounded();
@@ -607,22 +684,123 @@ class CommitRunnerScene extends Phaser.Scene {
      * Handle player jump input with double jump mechanic
      */
     handleJump() {
-        if (Phaser.Input.Keyboard.JustDown(this.spaceKey)) {
-            if (this.player.isGrounded) {
-                // First jump from ground (FREE - no charge cost)
+        const deltaSeconds = this.game.loop.delta / 1000;
+        
+        // Debug at the very start
+        const justDown = Phaser.Input.Keyboard.JustDown(this.spaceKey);
+        if (justDown) {
+            console.log('=== SPACE PRESSED ===');
+            console.log('Grounded:', this.player.isGrounded);
+            console.log('isChargingJump:', this.isChargingJump);
+            console.log('jumpCharge:', this.jumpCharge);
+            console.log('jumpHoldStartTime:', this.jumpHoldStartTime);
+        }
+        
+        // === CHARGE JUMP: SQUASHING PHASE ===
+        if (this.isChargingJump && this.spaceKey.isDown && this.player.isGrounded) {
+            console.log('Charging/Squashing');
+            this.chargeJumpTime += deltaSeconds;
+            
+            // Cap at max charge time
+            if (this.chargeJumpTime > GAME_CONFIG.CHARGE_JUMP_MAX_TIME) {
+                this.chargeJumpTime = GAME_CONFIG.CHARGE_JUMP_MAX_TIME;
+            }
+            
+            // Squash vertically - down to 10% height
+            const squashProgress = Math.min(this.chargeJumpTime / GAME_CONFIG.CHARGE_JUMP_MAX_TIME, 1);
+            const targetHeight = GRID.TILE_SIZE * (1 - squashProgress * (1 - GAME_CONFIG.CHARGE_JUMP_SQUASH_HEIGHT));
+            this.player.setDisplaySize(GRID.TILE_SIZE, targetHeight);
+            
+            return; // Stay on ground while charging
+        }
+        
+        // === CHARGE JUMP: LAUNCH PHASE ===
+        if (this.isChargingJump && Phaser.Input.Keyboard.JustUp(this.spaceKey)) {
+            console.log('Launch charge jump!');
+            const chargeRatio = Math.min(this.chargeJumpTime / GAME_CONFIG.CHARGE_JUMP_MAX_TIME, 1);
+            
+            // Calculate jump strength based on how long space was held
+            const jumpVelocity = GAME_CONFIG.CHARGE_JUMP_MIN_VELOCITY + 
+                (GAME_CONFIG.CHARGE_JUMP_MAX_VELOCITY - GAME_CONFIG.CHARGE_JUMP_MIN_VELOCITY) * chargeRatio;
+            const horizontalVelocity = GAME_CONFIG.CHARGE_JUMP_HORIZONTAL_VELOCITY * chargeRatio;
+            
+            // Launch!
+            this.player.setVelocityY(jumpVelocity);
+            this.player.setVelocityX(horizontalVelocity);
+            this.player.isGrounded = false;
+            this.player.isRotating = false;
+            
+            // Use 100% energy
+            this.jumpCharge = 0;
+            
+            // Reset charging state
+            this.isChargingJump = false;
+            this.chargeJumpTime = 0;
+            this.jumpHoldStartTime = null;
+            
+            // Reset size
+            this.player.setDisplaySize(GRID.TILE_SIZE, GRID.TILE_SIZE);
+            
+            return;
+        }
+        
+        // === DOUBLE JUMP (IN AIR) ===
+        if (justDown && !this.player.isGrounded && 
+            !this.isChargingJump && this.jumpCharge >= GAME_CONFIG.JUMP_CHARGE_COST) {
+            console.log('Double jump!');
+            // Double jump - costs 50% energy
+            this.player.setVelocityY(GAME_CONFIG.JUMP_VELOCITY);
+            this.player.setVelocityX(0);
+            this.jumpCharge -= GAME_CONFIG.JUMP_CHARGE_COST;
+            return;
+        }
+        
+        // === GROUND JUMPS: START TRACKING HOLD ===
+        if (justDown && this.player.isGrounded && !this.isChargingJump) {
+            console.log('>>> Ground jump section hit! Charge:', this.jumpCharge, 'Max:', GAME_CONFIG.JUMP_CHARGE_MAX);
+            
+            // Start tracking when space was pressed - DON'T jump yet
+            this.jumpHoldStartTime = this.time.now;
+            
+            // If we DON'T have 100% charge, jump immediately
+            if (this.jumpCharge < GAME_CONFIG.JUMP_CHARGE_MAX) {
+                console.log('>>> Regular jump (not full charge)');
                 this.player.setVelocityY(GAME_CONFIG.JUMP_VELOCITY);
+                this.player.setVelocityX(0);
                 this.player.isGrounded = false;
                 this.player.isRotating = false;
-                this.jumpsUsed = 0; // Reset counter
-                this.player.canDoubleJump = true; // Enable double jump for this airtime
-            } else if (!this.player.isGrounded && this.player.canDoubleJump && this.jumpCharge >= GAME_CONFIG.JUMP_CHARGE_COST) {
-                // Double jump in the air (only before landing) - COSTS 50% CHARGE
-                this.player.setVelocityY(GAME_CONFIG.JUMP_VELOCITY);
-                this.player.canDoubleJump = false; // Can't triple jump
-                
-                // Use jump charge (only for double jump)
-                this.jumpCharge -= GAME_CONFIG.JUMP_CHARGE_COST;
-                this.jumpsUsed = 1;
+                this.jumpHoldStartTime = null;
+            } else {
+                console.log('>>> Have full charge, waiting...');
+            }
+            return;
+        }
+        
+        // === CHECK IF HOLD OR TAP (WITH 100% ENERGY) ===
+        if (this.jumpHoldStartTime !== null && this.player.isGrounded) {
+            const holdDuration = this.time.now - this.jumpHoldStartTime;
+            
+            // If they released quickly - regular jump
+            if (Phaser.Input.Keyboard.JustUp(this.spaceKey)) {
+                console.log('>>> Space released. Hold duration:', holdDuration);
+                if (holdDuration < 150) { // Reduced from 200ms to 150ms for faster response
+                    console.log('>>> Regular jump (quick tap)');
+                    this.player.setVelocityY(GAME_CONFIG.JUMP_VELOCITY);
+                    this.player.setVelocityX(0);
+                    this.player.isGrounded = false;
+                    this.player.isRotating = false;
+                }
+                this.jumpHoldStartTime = null;
+                return;
+            }
+            
+            // If they held past threshold - start charging
+            if (this.spaceKey.isDown && holdDuration >= 150) { // Also reduced to 150ms
+                console.log('>>> Starting charge jump (held past threshold)');
+                this.isChargingJump = true;
+                this.chargeJumpTime = 0;
+                this.jumpHoldStartTime = null;
+                return;
             }
         }
     }
@@ -732,19 +910,19 @@ class CommitRunnerScene extends Phaser.Scene {
         const screenHeight = this.cameras.main.height;
         const wasGrounded = this.player.isGrounded;
         
-        // Manually check if player is standing on a GREEN obstacle tile
-        let standingOnObstacle = false;
-        let highestObstacleY = screenHeight;
-        
+        // Player bounds
         const playerBottom = this.player.y + (GRID.TILE_SIZE / 2);
         const playerLeft = this.player.x - (GRID.TILE_SIZE / 2);
         const playerRight = this.player.x + (GRID.TILE_SIZE / 2);
+        const playerTop = this.player.y - (GRID.TILE_SIZE / 2);
         
-        // Check ONLY green obstacles from our tracking array
+        let standingOnObstacle = false;
+        let highestObstacleY = screenHeight;
+        
+        // Check ONLY green obstacles
         for (let i = 0; i < this.greenObstacles.length; i++) {
             const obstacle = this.greenObstacles[i];
             
-            // Skip if tile has been destroyed or is off screen
             if (!obstacle.active) continue;
             
             const obstacleTop = obstacle.y;
@@ -752,38 +930,67 @@ class CommitRunnerScene extends Phaser.Scene {
             const obstacleLeft = obstacle.x;
             const obstacleRight = obstacle.x + GRID.TILE_SIZE;
             
-            // Check if player is on top of this obstacle
-            const isOnTop = playerBottom >= obstacleTop && playerBottom <= obstacleTop + 10;
-            const isOverlapping = playerRight > obstacleLeft + 2 && playerLeft < obstacleRight - 2;
+            // Check if player overlaps with obstacle
+            const overlapsX = playerRight > obstacleLeft + 1 && playerLeft < obstacleRight - 1;
+            const overlapsY = playerBottom > obstacleTop + 1 && playerTop < obstacleBottom - 1;
             
-            if (isOnTop && isOverlapping && obstacleTop < highestObstacleY) {
-                standingOnObstacle = true;
-                highestObstacleY = obstacleTop;
+            if (overlapsX && overlapsY) {
+                // There's a collision - resolve it
+                const overlapLeft = playerRight - obstacleLeft;
+                const overlapRight = obstacleRight - playerLeft;
+                const overlapTop = playerBottom - obstacleTop;
+                const overlapBottom = obstacleBottom - playerTop;
+                
+                const minOverlap = Math.min(overlapLeft, overlapRight, overlapTop, overlapBottom);
+                
+                // Push out in direction of smallest overlap
+                if (minOverlap === overlapTop && this.player.body.velocity.y >= 0) {
+                    // Landing on top
+                    if (obstacleTop < highestObstacleY) {
+                        highestObstacleY = obstacleTop;
+                        standingOnObstacle = true;
+                    }
+                } else if (minOverlap === overlapBottom && this.player.body.velocity.y <= 0) {
+                    // Hit bottom (jumping into ceiling)
+                    this.player.y = obstacleBottom + (GRID.TILE_SIZE / 2);
+                    this.player.setVelocityY(0);
+                } else if (minOverlap === overlapLeft) {
+                    // Hit from left side
+                    this.player.x = obstacleLeft - (GRID.TILE_SIZE / 2);
+                    this.player.setVelocityX(0);
+                } else if (minOverlap === overlapRight) {
+                    // Hit from right side
+                    this.player.x = obstacleRight + (GRID.TILE_SIZE / 2);
+                    this.player.setVelocityX(0);
+                }
+            } else if (overlapsX && !overlapsY) {
+                // Check if about to land
+                const gap = obstacleTop - playerBottom;
+                if (gap >= -1 && gap <= 3 && this.player.body.velocity.y >= 0) {
+                    if (obstacleTop < highestObstacleY) {
+                        highestObstacleY = obstacleTop;
+                        standingOnObstacle = true;
+                    }
+                }
             }
         }
         
-        if (standingOnObstacle && this.player.body.velocity.y >= 0) {
-            // Snap player to the top of the obstacle
+        // Apply grounded state
+        if (standingOnObstacle) {
             this.player.y = highestObstacleY - (GRID.TILE_SIZE / 2);
             this.player.setVelocityY(0);
             
-            // Player is standing on top of a green obstacle
             if (!wasGrounded) {
                 this.player.isGrounded = true;
-                this.player.canDoubleJump = false;
                 this.player.isRotating = true;
             } else {
                 this.player.isGrounded = true;
             }
-        } else if (this.player.body.velocity.y < 0) {
-            // Player is moving upward (jumping)
-            this.player.isGrounded = false;
         } else {
-            // Player is in the air
             this.player.isGrounded = false;
         }
         
-        // Game over if player falls below the screen
+        // Game over if player falls below screen
         if (this.player.y > screenHeight + 50) {
             this.triggerGameOver();
         }
