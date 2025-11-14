@@ -205,6 +205,9 @@ class CommitRunnerScene extends Phaser.Scene {
         // Track pattern generation (for same-height columns)
         this.patternColumnsRemaining = 0;
         this.patternHeight = 0;
+        
+        // Track previous column height for height difference rule
+        this.previousColumnHeight = 7;
     }
 
     /**
@@ -278,6 +281,16 @@ class CommitRunnerScene extends Phaser.Scene {
      * @param {number} x - X position for the column
      */
     generateColumn(x) {
+        // Calculate difficulty based on score (increases every 200 points)
+        const difficultyLevel = Math.floor(this.score / 200);
+        
+        // Max height difference: starts at 2, increases by 1 every 200 points
+        const maxHeightDiff = 2 + difficultyLevel;
+        
+        // Pattern frequency: starts at 10-12, increases by 2 every 200 points
+        const patternMinFreq = 10 + (difficultyLevel * 2);
+        const patternMaxFreq = 12 + (difficultyLevel * 2);
+        
         // Determine column height (0-7 blocks)
         let height;
         
@@ -290,15 +303,28 @@ class CommitRunnerScene extends Phaser.Scene {
                 height = this.patternHeight;
                 this.patternColumnsRemaining--;
             } else {
-                // Generate new height
-                height = Phaser.Math.Between(0, 7);
+                // Generate new height with constraints
+                let attempts = 0;
+                do {
+                    height = Phaser.Math.Between(0, 7);
+                    attempts++;
+                    
+                    // If too many attempts, just clamp the height
+                    if (attempts > 10) {
+                        height = Math.max(0, Math.min(7, 
+                            this.previousColumnHeight - maxHeightDiff,
+                            this.previousColumnHeight + maxHeightDiff
+                        ));
+                        break;
+                    }
+                } while (Math.abs(height - this.previousColumnHeight) > maxHeightDiff);
                 
                 // Enforce rule: no more than 2 consecutive empty columns
                 if (height === 0) {
                     this.consecutiveEmptyColumns++;
                     if (this.consecutiveEmptyColumns > 2) {
                         // Force at least 1 block
-                        height = Phaser.Math.Between(1, 7);
+                        height = Phaser.Math.Between(1, Math.min(7, this.previousColumnHeight + maxHeightDiff));
                         this.consecutiveEmptyColumns = 0;
                     }
                 } else {
@@ -306,18 +332,22 @@ class CommitRunnerScene extends Phaser.Scene {
                 }
                 
                 // Randomly create patterns of same-height columns
-                const patternChance = Phaser.Math.Between(1, 15);
-                if (patternChance <= 5) {
-                    // 1 in 3-5: Create 2 columns of same height
+                // Frequency increases with difficulty
+                const patternChance = Phaser.Math.Between(1, patternMaxFreq);
+                if (patternChance <= 3) {
+                    // Create 2 columns of same height
                     this.patternHeight = height;
                     this.patternColumnsRemaining = 1; // 1 more column after this one
-                } else if (patternChance === 15) {
-                    // 1 in 15: Create 3 columns of same height
+                } else if (patternChance === patternMaxFreq) {
+                    // Create 3 columns of same height (rarer)
                     this.patternHeight = height;
                     this.patternColumnsRemaining = 2; // 2 more columns after this one
                 }
             }
         }
+        
+        // Store this height for next column's height difference check
+        this.previousColumnHeight = height;
         
         // Increment counter
         this.totalColumnsGenerated++;
@@ -588,6 +618,7 @@ class CommitRunnerScene extends Phaser.Scene {
         this.totalColumnsGenerated = 0;
         this.patternColumnsRemaining = 0;
         this.patternHeight = 0;
+        this.previousColumnHeight = 7; // Reset previous height
         this.jumpCharge = GAME_CONFIG.JUMP_CHARGE_MAX;
         this.jumpsUsed = 0;
         this.colorWaveTime = 0; // Reset color wave
