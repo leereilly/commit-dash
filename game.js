@@ -3,6 +3,25 @@
  * Built with Phaser 3
  */
 
+// Cookie utility functions
+function setCookie(name, value, days) {
+    const date = new Date();
+    date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+    const expires = "expires=" + date.toUTCString();
+    document.cookie = name + "=" + value + ";" + expires + ";path=/";
+}
+
+function getCookie(name) {
+    const nameEQ = name + "=";
+    const ca = document.cookie.split(';');
+    for (let i = 0; i < ca.length; i++) {
+        let c = ca[i];
+        while (c.charAt(0) === ' ') c = c.substring(1, c.length);
+        if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
+    }
+    return null;
+}
+
 // GitHub contribution graph color palette
 const COLORS = {
     BACKGROUND: 0xebedf0,    // Light gray (non-collidable)
@@ -44,10 +63,14 @@ class CommitRunnerScene extends Phaser.Scene {
         // Initialize game state
         this.isGameOver = false;
         this.score = 0;
+        this.highScore = 0; // Initialize high score
         this.worldX = 0; // Track world position for column generation
         this.jumpCharge = GAME_CONFIG.JUMP_CHARGE_MAX; // Start with full charge
         this.jumpsUsed = 0; // Track consecutive jumps
         this.colorWaveTime = 0; // Track time for color wave animation
+        
+        // Load high score from cookie
+        this.loadHighScore();
         
         // Container groups
         this.tilesGroup = this.add.group();
@@ -73,6 +96,22 @@ class CommitRunnerScene extends Phaser.Scene {
             padding: { x: 8, y: 4 }
         });
         this.scoreText.setDepth(100);
+        
+        // High score display (top-right corner)
+        this.highScoreText = this.add.text(
+            this.cameras.main.width - 16,
+            16,
+            `High Score: ${this.highScore}`,
+            {
+                fontSize: '20px',
+                fill: '#000000',
+                fontFamily: 'monospace',
+                backgroundColor: 'rgba(255, 255, 255, 0.8)',
+                padding: { x: 8, y: 4 }
+            }
+        );
+        this.highScoreText.setOrigin(1, 0); // Anchor to top-right
+        this.highScoreText.setDepth(100);
         
         // Game over text (hidden initially)
         this.gameOverText = this.add.text(
@@ -137,6 +176,25 @@ class CommitRunnerScene extends Phaser.Scene {
         // Track pattern generation (for same-height columns)
         this.patternColumnsRemaining = 0;
         this.patternHeight = 0;
+    }
+
+    /**
+     * Load high score from cookie
+     */
+    loadHighScore() {
+        const savedHighScore = getCookie('commitRunnerHighScore');
+        if (savedHighScore !== null) {
+            this.highScore = parseInt(savedHighScore, 10) || 0;
+        } else {
+            this.highScore = 0;
+        }
+    }
+
+    /**
+     * Save high score to cookie (expires in ~1 year)
+     */
+    saveHighScore() {
+        setCookie('commitRunnerHighScore', this.highScore.toString(), 365);
     }
 
     /**
@@ -499,6 +557,14 @@ class CommitRunnerScene extends Phaser.Scene {
      */
     triggerGameOver() {
         this.isGameOver = true;
+        
+        // Check and update high score
+        const finalScore = Math.floor(this.score);
+        if (finalScore > this.highScore) {
+            this.highScore = finalScore;
+            this.saveHighScore();
+            this.highScoreText.setText(`High Score: ${this.highScore}`);
+        }
         
         // Stop player physics
         this.player.setVelocity(0, 0);
