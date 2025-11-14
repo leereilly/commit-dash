@@ -693,6 +693,10 @@ class CommitRunnerScene extends Phaser.Scene {
                 this.chargeJumpTime = GAME_CONFIG.CHARGE_JUMP_MAX_TIME;
             }
             
+            // Reset rotation to 0 so squash is always vertical
+            this.player.angle = 0;
+            this.player.isRotating = false;
+            
             // Squash vertically - down to 10% height
             const squashProgress = Math.min(this.chargeJumpTime / GAME_CONFIG.CHARGE_JUMP_MAX_TIME, 1);
             const targetHeight = GRID.TILE_SIZE * (1 - squashProgress * (1 - GAME_CONFIG.CHARGE_JUMP_SQUASH_HEIGHT));
