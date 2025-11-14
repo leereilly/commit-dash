@@ -52,6 +52,7 @@ class CommitRunnerScene extends Phaser.Scene {
         // Container groups
         this.tilesGroup = this.add.group();
         this.obstaclesGroup = this.physics.add.staticGroup();
+        this.greenObstacles = []; // Track green obstacles separately for manual collision
         
         // Create the player sprite
         this.createPlayer();
@@ -110,23 +111,19 @@ class CommitRunnerScene extends Phaser.Scene {
         // Create jump charge gauge
         this.createJumpChargeGauge();
         
-        // Set up collision detection - use overlap to allow jumping while colliding
+        // Set up overlap detection for side collisions only (not using collider at all)
         this.physics.add.overlap(
             this.player,
             this.obstaclesGroup,
             this.handleCollision,
-            null,
+            (player, obstacle) => {
+                // Only process overlap for obstacles, not gray tiles
+                return obstacle.isObstacle === true && obstacle.tileType === 'GREEN_OBSTACLE';
+            },
             this
         );
         
-        // Separate collider for standing on top (only vertical collision)
-        this.physics.add.collider(
-            this.player,
-            this.obstaclesGroup,
-            null,
-            this.shouldCollide,
-            this
-        );
+        // NO COLLIDER - we handle all physics manually
         
         // Track consecutive empty columns
         this.consecutiveEmptyColumns = 0;
@@ -324,8 +321,8 @@ class CommitRunnerScene extends Phaser.Scene {
      * @param {boolean} isObstacle - Whether this is a solid obstacle
      */
     createTile(x, y, isObstacle) {
-        if (isObstacle) {
-            // Create green obstacle tile with oscillating color
+        if (isObstacle === true) {
+            // GREEN OBSTACLE TILE - has physics
             const color = this.getOscillatingGreenColor(x, y);
             
             // Create graphics for the tile
@@ -340,13 +337,20 @@ class CommitRunnerScene extends Phaser.Scene {
             tile.setOrigin(0, 0);
             tile.setDisplaySize(GRID.TILE_SIZE, GRID.TILE_SIZE);
             tile.body.setSize(GRID.TILE_SIZE, GRID.TILE_SIZE);
+            tile.body.immovable = true; // Make it solid
+            tile.body.moves = false; // Ensure it doesn't move
             tile.refreshBody();
             
-            // Store reference for color updates
-            tile.tileX = x; // Store original x position for wave calculation
-            tile.tileY = y; // Store original y position for wave calculation
+            // Store reference for color updates and mark as obstacle
+            tile.tileX = x;
+            tile.tileY = y;
+            tile.isObstacle = true;
+            tile.tileType = 'GREEN_OBSTACLE';
+            
+            // Add to our separate tracking array
+            this.greenObstacles.push(tile);
         } else {
-            // Create background tile (non-collidable) as a sprite so it scrolls properly
+            // GRAY BACKGROUND TILE - NO physics whatsoever
             // Generate texture for gray background tile if not already created
             if (!this.textures.exists('grayTile')) {
                 const graphics = this.add.graphics();
@@ -356,14 +360,33 @@ class CommitRunnerScene extends Phaser.Scene {
                 graphics.destroy();
             }
             
-            // Create as a regular sprite (not physics body, just visual)
+            // Create as a REGULAR sprite - NOT a physics sprite
             const tile = this.add.sprite(x, y, 'grayTile');
             tile.setOrigin(0, 0);
             tile.setDisplaySize(GRID.TILE_SIZE, GRID.TILE_SIZE);
-            tile.setDepth(0); // Put gray tiles behind everything
+            tile.setDepth(0);
+            tile.isObstacle = false;
+            tile.tileType = 'GRAY_BACKGROUND';
             
-            // Add to tiles group for scrolling and cleanup
+            // Add ONLY to tilesGroup (NOT obstaclesGroup!)
             this.tilesGroup.add(tile);
+            
+            // CRITICAL: Ensure it has NO physics body
+            if (tile.body) {
+                console.error('CRITICAL ERROR: Gray tile created with physics body!', {
+                    x, y, tile, body: tile.body
+                });
+                // Force remove physics
+                if (this.physics.world) {
+                    this.physics.world.disableBody(tile.body);
+                }
+            }
+            
+            // CRITICAL: Ensure it's not in obstaclesGroup
+            if (this.obstaclesGroup.contains(tile)) {
+                console.error('CRITICAL ERROR: Gray tile in obstaclesGroup!', { x, y, tile });
+                this.obstaclesGroup.remove(tile, true, false);
+            }
         }
     }
 
@@ -423,6 +446,18 @@ class CommitRunnerScene extends Phaser.Scene {
      * @param {Phaser.GameObjects.GameObject} obstacle
      */
     shouldCollide(player, obstacle) {
+        // Never collide with gray tiles
+        if (obstacle.isObstacle === false) {
+            console.warn('Attempting to collide with gray tile - blocked!', obstacle);
+            return false;
+        }
+        
+        // Check if obstacle is even in the obstaclesGroup (it should be)
+        if (!obstacle.body) {
+            console.warn('Obstacle has no physics body!', obstacle);
+            return false;
+        }
+        
         // Only allow collision if player is falling onto the obstacle (from above)
         const playerBottom = player.y + (GRID.TILE_SIZE / 2);
         const obstacleTop = obstacle.y;
@@ -481,6 +516,7 @@ class CommitRunnerScene extends Phaser.Scene {
         // Clear all tiles and obstacles
         this.tilesGroup.clear(true, true);
         this.obstaclesGroup.clear(true, true);
+        this.greenObstacles = []; // Clear green obstacles array
         
         // Reset game state
         this.isGameOver = false;
@@ -623,29 +659,33 @@ class CommitRunnerScene extends Phaser.Scene {
      */
     handleRotation(delta) {
         if (!this.player.isGrounded) {
-            // Rotate clockwise while in the air (360 degrees per second = ~6.28 radians/sec)
+            // Rotate clockwise while in the air (360 degrees per second)
             this.player.angle += 360 * delta;
         } else if (this.player.isRotating) {
             // When landing, rotate to align with nearest 90-degree angle
             const rotationSpeed = 720; // degrees per second
-            const currentAngle = this.player.angle % 360;
+            
+            // Normalize angle to 0-360 range
+            let currentAngle = this.player.angle % 360;
+            if (currentAngle < 0) currentAngle += 360;
             
             // Find nearest 90-degree increment
-            this.player.targetRotation = Math.round(currentAngle / 90) * 90;
+            const targetRotation = Math.round(currentAngle / 90) * 90;
             
             // Calculate shortest rotation direction
-            let angleDiff = this.player.targetRotation - currentAngle;
+            let angleDiff = targetRotation - currentAngle;
             if (angleDiff > 180) angleDiff -= 360;
             if (angleDiff < -180) angleDiff += 360;
             
             // Rotate towards target
-            if (Math.abs(angleDiff) < rotationSpeed * delta) {
-                // Close enough, snap to target
-                this.player.angle = this.player.targetRotation;
+            if (Math.abs(angleDiff) < 5) {
+                // Close enough, snap to target and stop rotating
+                this.player.angle = targetRotation;
                 this.player.isRotating = false;
             } else {
                 // Continue rotating
-                this.player.angle += Math.sign(angleDiff) * rotationSpeed * delta;
+                const rotationAmount = Math.sign(angleDiff) * rotationSpeed * delta;
+                this.player.angle += rotationAmount;
             }
         }
     }
@@ -699,27 +739,44 @@ class CommitRunnerScene extends Phaser.Scene {
      */
     checkGrounded() {
         const screenHeight = this.cameras.main.height;
-        const groundLevel = screenHeight - (GRID.TILE_SIZE / 2);
-        
         const wasGrounded = this.player.isGrounded;
         
-        // Check if player is standing on an obstacle (green tiles)
-        if (this.player.body.touching.down || this.player.body.blocked.down) {
-            // Player is standing on top of an obstacle
-            // Only disable double jump if transitioning from air to ground
-            if (!wasGrounded) {
-                this.player.isGrounded = true;
-                this.player.canDoubleJump = false; // Disable double jump once landed
-                this.player.isRotating = true;
-            } else {
-                this.player.isGrounded = true;
+        // Manually check if player is standing on a GREEN obstacle tile
+        let standingOnObstacle = false;
+        let highestObstacleY = screenHeight;
+        
+        const playerBottom = this.player.y + (GRID.TILE_SIZE / 2);
+        const playerLeft = this.player.x - (GRID.TILE_SIZE / 2);
+        const playerRight = this.player.x + (GRID.TILE_SIZE / 2);
+        
+        // Check ONLY green obstacles from our tracking array
+        for (let i = 0; i < this.greenObstacles.length; i++) {
+            const obstacle = this.greenObstacles[i];
+            
+            // Skip if tile has been destroyed or is off screen
+            if (!obstacle.active) continue;
+            
+            const obstacleTop = obstacle.y;
+            const obstacleBottom = obstacle.y + GRID.TILE_SIZE;
+            const obstacleLeft = obstacle.x;
+            const obstacleRight = obstacle.x + GRID.TILE_SIZE;
+            
+            // Check if player is on top of this obstacle
+            const isOnTop = playerBottom >= obstacleTop && playerBottom <= obstacleTop + 10;
+            const isOverlapping = playerRight > obstacleLeft + 2 && playerLeft < obstacleRight - 2;
+            
+            if (isOnTop && isOverlapping && obstacleTop < highestObstacleY) {
+                standingOnObstacle = true;
+                highestObstacleY = obstacleTop;
             }
-        } else if (this.player.y >= groundLevel && this.player.body.velocity.y >= 0) {
-            // Player has fallen to the base ground level (for empty columns)
-            this.player.y = groundLevel;
+        }
+        
+        if (standingOnObstacle && this.player.body.velocity.y >= 0) {
+            // Snap player to the top of the obstacle
+            this.player.y = highestObstacleY - (GRID.TILE_SIZE / 2);
             this.player.setVelocityY(0);
             
-            // Only disable double jump if transitioning from air to ground
+            // Player is standing on top of a green obstacle
             if (!wasGrounded) {
                 this.player.isGrounded = true;
                 this.player.canDoubleJump = false;
@@ -735,8 +792,8 @@ class CommitRunnerScene extends Phaser.Scene {
             this.player.isGrounded = false;
         }
         
-        // Game over if player falls way below the screen
-        if (this.player.y > screenHeight + 100) {
+        // Game over if player falls below the screen
+        if (this.player.y > screenHeight + 50) {
             this.triggerGameOver();
         }
     }
