@@ -9,6 +9,7 @@
             margin: 0;
             padding: 0;
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
@@ -18,10 +19,27 @@
         #game-container {
             box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
         }
+        footer {
+            margin-top: 20px;
+            padding: 10px 20px;
+            text-align: center;
+            font-size: 12px;
+            color: #8b949e;
+        }
+        footer a {
+            color: #58a6ff;
+            text-decoration: none;
+        }
+        footer a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
     <div id="game-container"></div>
+    <footer>
+        Made with ♥ for <a href="https://itch.io/jam/game-off-2025">GitHub Game Off '25</a> by <a href="https://github.com/leereilly">@leereilly</a> &amp;&amp; <a href="https://github.com/copilot">@copilot</a> · <a href="https://github.com/leereilly/commit-dash">View source</a>
+    </footer>
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
     <script src="game.js"></script>
 </body>
