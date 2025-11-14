@@ -3,6 +3,25 @@
  * Built with Phaser 3
  */
 
+// Cookie utility functions
+function setCookie(name, value, days) {
+    const date = new Date();
+    date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+    const expires = "expires=" + date.toUTCString();
+    document.cookie = name + "=" + value + ";" + expires + ";path=/";
+}
+
+function getCookie(name) {
+    const nameEQ = name + "=";
+    const ca = document.cookie.split(';');
+    for (let i = 0; i < ca.length; i++) {
+        let c = ca[i];
+        while (c.charAt(0) === ' ') c = c.substring(1, c.length);
+        if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
+    }
+    return null;
+}
+
 // GitHub contribution graph color palette
 const COLORS = {
     BACKGROUND: 0xebedf0,    // Light gray (non-collidable)
@@ -44,10 +63,14 @@ class CommitRunnerScene extends Phaser.Scene {
         // Initialize game state
         this.isGameOver = false;
         this.score = 0;
+        this.highScore = 0; // Initialize high score
         this.worldX = 0; // Track world position for column generation
         this.jumpCharge = GAME_CONFIG.JUMP_CHARGE_MAX; // Start with full charge
         this.jumpsUsed = 0; // Track consecutive jumps
         this.colorWaveTime = 0; // Track time for color wave animation
+        
+        // Load high score from cookie
+        this.loadHighScore();
         
         // Container groups
         this.tilesGroup = this.add.group();
@@ -73,6 +96,22 @@ class CommitRunnerScene extends Phaser.Scene {
             padding: { x: 8, y: 4 }
         });
         this.scoreText.setDepth(100);
+        
+        // High score display (top-right corner)
+        this.highScoreText = this.add.text(
+            this.cameras.main.width - 16,
+            16,
+            `High Score: ${this.highScore}`,
+            {
+                fontSize: '20px',
+                fill: '#000000',
+                fontFamily: 'monospace',
+                backgroundColor: 'rgba(255, 255, 255, 0.8)',
+                padding: { x: 8, y: 4 }
+            }
+        );
+        this.highScoreText.setOrigin(1, 0); // Anchor to top-right
+        this.highScoreText.setDepth(100);
         
         // Game over text (hidden initially)
         this.gameOverText = this.add.text(
@@ -108,9 +147,6 @@ class CommitRunnerScene extends Phaser.Scene {
         this.restartText.setVisible(false);
         this.restartText.setDepth(100);
         
-        // Create jump charge gauge
-        this.createJumpChargeGauge();
-        
         // Set up overlap detection for side collisions only (not using collider at all)
         this.physics.add.overlap(
             this.player,
@@ -137,6 +173,25 @@ class CommitRunnerScene extends Phaser.Scene {
         // Track pattern generation (for same-height columns)
         this.patternColumnsRemaining = 0;
         this.patternHeight = 0;
+    }
+
+    /**
+     * Load high score from cookie
+     */
+    loadHighScore() {
+        const savedHighScore = getCookie('commitRunnerHighScore');
+        if (savedHighScore !== null) {
+            this.highScore = parseInt(savedHighScore, 10) || 0;
+        } else {
+            this.highScore = 0;
+        }
+    }
+
+    /**
+     * Save high score to cookie (expires in ~1 year)
+     */
+    saveHighScore() {
+        setCookie('commitRunnerHighScore', this.highScore.toString(), 365);
     }
 
     /**
@@ -170,72 +225,6 @@ class CommitRunnerScene extends Phaser.Scene {
         // Track rotation state
         this.player.targetRotation = 0; // Target rotation to align with surface
         this.player.isRotating = false; // Whether actively rotating to align
-    }
-
-    /**
-     * Create the jump charge gauge display
-     */
-    createJumpChargeGauge() {
-        const gaugeWidth = 20;
-        const gaugeHeight = 120;
-        const gaugeX = this.cameras.main.width - 40;
-        const gaugeY = 60;
-        
-        // Background (empty gauge)
-        this.chargeGaugeBg = this.add.rectangle(
-            gaugeX,
-            gaugeY,
-            gaugeWidth,
-            gaugeHeight,
-            0xcccccc
-        );
-        this.chargeGaugeBg.setOrigin(0.5, 0);
-        this.chargeGaugeBg.setDepth(100);
-        this.chargeGaugeBg.setStrokeStyle(2, 0x000000);
-        
-        // Foreground (filled gauge)
-        this.chargeGaugeFill = this.add.rectangle(
-            gaugeX,
-            gaugeY + gaugeHeight,
-            gaugeWidth,
-            gaugeHeight,
-            0x40c463
-        );
-        this.chargeGaugeFill.setOrigin(0.5, 1);
-        this.chargeGaugeFill.setDepth(101);
-        
-        // Label
-        this.chargeGaugeLabel = this.add.text(
-            gaugeX,
-            gaugeY - 10,
-            'JUMP',
-            {
-                fontSize: '12px',
-                fill: '#000000',
-                fontFamily: 'monospace',
-                fontStyle: 'bold'
-            }
-        );
-        this.chargeGaugeLabel.setOrigin(0.5, 1);
-        this.chargeGaugeLabel.setDepth(100);
-        
-        // Store gauge dimensions for updates
-        this.gaugeMaxHeight = gaugeHeight;
-        this.gaugeBaseY = gaugeY + gaugeHeight;
-    }
-
-    /**
-     * Update the jump charge gauge display
-     */
-    updateJumpChargeGauge() {
-        const chargePercent = this.jumpCharge / GAME_CONFIG.JUMP_CHARGE_MAX;
-        const fillHeight = this.gaugeMaxHeight * chargePercent;
-        
-        // Update the height of the fill rectangle
-        this.chargeGaugeFill.displayHeight = fillHeight;
-        
-        // Also update the Y position to keep it aligned at the bottom
-        this.chargeGaugeFill.y = this.gaugeBaseY;
     }
 
     /**
@@ -500,6 +489,14 @@ class CommitRunnerScene extends Phaser.Scene {
     triggerGameOver() {
         this.isGameOver = true;
         
+        // Check and update high score
+        const finalScore = Math.floor(this.score);
+        if (finalScore > this.highScore) {
+            this.highScore = finalScore;
+            this.saveHighScore();
+            this.highScoreText.setText(`High Score: ${this.highScore}`);
+        }
+        
         // Stop player physics
         this.player.setVelocity(0, 0);
         this.player.setAcceleration(0, 0);
@@ -548,9 +545,6 @@ class CommitRunnerScene extends Phaser.Scene {
         
         // Update score display
         this.scoreText.setText('Score: 0');
-        
-        // Update gauge display
-        this.updateJumpChargeGauge();
     }
 
     /**
@@ -592,9 +586,6 @@ class CommitRunnerScene extends Phaser.Scene {
         // Update score based on distance survived
         this.score += deltaSeconds * 10; // 10 points per second
         this.scoreText.setText(`Score: ${Math.floor(this.score)}`);
-        
-        // Update jump charge gauge display (every frame for smooth animation)
-        this.updateJumpChargeGauge();
         
         // Check if player fell off the bottom
         if (this.player.y > this.cameras.main.height + 50) {
