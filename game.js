@@ -79,6 +79,7 @@ class CommitRunnerScene extends Phaser.Scene {
         this.isChargingJump = false;
         this.chargeJumpTime = 0;
         this.jumpHoldStartTime = null; // Track when space was first pressed
+        this.lastGroundedTime = 0; // Track when player last touched ground
         
         // Load high score from cookie
         this.loadHighScore();
@@ -328,6 +329,7 @@ class CommitRunnerScene extends Phaser.Scene {
         // Create all 7 rows
         for (let row = 0; row < GRID.ROWS; row++) {
             const y = bottomY - (row * GRID.TILE_FULL_SIZE);
+            // Only the first 'height' rows are obstacles (from bottom up)
             const isObstacle = row < height;
             
             this.createTile(x, y, isObstacle);
@@ -343,17 +345,17 @@ class CommitRunnerScene extends Phaser.Scene {
     createTile(x, y, isObstacle) {
         if (isObstacle === true) {
             // GREEN OBSTACLE TILE - has physics
-            const color = this.getOscillatingGreenColor(x, y);
-            
-            // Create graphics for the tile
-            const graphics = this.add.graphics();
-            graphics.fillStyle(color, 1);
-            graphics.fillRect(0, 0, GRID.TILE_SIZE, GRID.TILE_SIZE);
-            graphics.generateTexture(`tile_${x}_${y}`, GRID.TILE_SIZE, GRID.TILE_SIZE);
-            graphics.destroy();
+            // Create a WHITE texture so tinting works properly
+            if (!this.textures.exists('greenTile')) {
+                const graphics = this.add.graphics();
+                graphics.fillStyle(0xffffff, 1); // WHITE
+                graphics.fillRect(0, 0, GRID.TILE_SIZE, GRID.TILE_SIZE);
+                graphics.generateTexture('greenTile', GRID.TILE_SIZE, GRID.TILE_SIZE);
+                graphics.destroy();
+            }
             
             // Create the obstacle as a sprite with proper physics body
-            const tile = this.obstaclesGroup.create(x, y, `tile_${x}_${y}`);
+            const tile = this.obstaclesGroup.create(x, y, 'greenTile');
             tile.setOrigin(0, 0);
             tile.setDisplaySize(GRID.TILE_SIZE, GRID.TILE_SIZE);
             tile.body.setSize(GRID.TILE_SIZE, GRID.TILE_SIZE);
@@ -366,6 +368,10 @@ class CommitRunnerScene extends Phaser.Scene {
             tile.tileY = y;
             tile.isObstacle = true;
             tile.tileType = 'GREEN_OBSTACLE';
+            
+            // Set initial tint color
+            const color = this.getOscillatingGreenColor(x, y);
+            tile.setTint(color);
             
             // Add to our separate tracking array
             this.greenObstacles.push(tile);
@@ -676,6 +682,7 @@ class CommitRunnerScene extends Phaser.Scene {
         
         // Check for JustDown once and reuse
         const justDown = Phaser.Input.Keyboard.JustDown(this.spaceKey);
+        const justUp = Phaser.Input.Keyboard.JustUp(this.spaceKey);
         
         // === CHARGE JUMP: SQUASHING PHASE ===
         if (this.isChargingJump && this.spaceKey.isDown && this.player.isGrounded) {
@@ -695,7 +702,7 @@ class CommitRunnerScene extends Phaser.Scene {
         }
         
         // === CHARGE JUMP: LAUNCH PHASE ===
-        if (this.isChargingJump && Phaser.Input.Keyboard.JustUp(this.spaceKey)) {
+        if (this.isChargingJump && justUp) {
             const chargeRatio = Math.min(this.chargeJumpTime / GAME_CONFIG.CHARGE_JUMP_MAX_TIME, 1);
             
             // Calculate jump strength based on how long space was held
@@ -709,8 +716,10 @@ class CommitRunnerScene extends Phaser.Scene {
             this.player.isGrounded = false;
             this.player.isRotating = false;
             
-            // Use 100% energy
-            this.jumpCharge = 0;
+            // Use 100% energy ONLY if we actually charged (prevent accidental energy drain)
+            if (this.chargeJumpTime > 0) {
+                this.jumpCharge = 0;
+            }
             
             // Reset charging state
             this.isChargingJump = false;
@@ -724,7 +733,11 @@ class CommitRunnerScene extends Phaser.Scene {
         }
         
         // === DOUBLE JUMP (IN AIR) ===
-        if (justDown && !this.player.isGrounded && 
+        // Only count as air jump if player has been off ground for more than 100ms (grace period)
+        const timeSinceGrounded = this.time.now - this.lastGroundedTime;
+        const isActuallyInAir = !this.player.isGrounded && timeSinceGrounded > 100;
+        
+        if (justDown && isActuallyInAir && 
             !this.isChargingJump && this.jumpCharge >= GAME_CONFIG.JUMP_CHARGE_COST) {
             // Double jump - costs 50% energy
             this.player.setVelocityY(GAME_CONFIG.JUMP_VELOCITY);
@@ -734,44 +747,48 @@ class CommitRunnerScene extends Phaser.Scene {
         }
         
         // === GROUND JUMPS: START TRACKING HOLD ===
-        if (justDown && this.player.isGrounded && !this.isChargingJump) {
-            // Start tracking when space was pressed - DON'T jump yet
+        if (justDown && (this.player.isGrounded || timeSinceGrounded <= 100) && !this.isChargingJump) {
             this.jumpHoldStartTime = this.time.now;
-            
-            // If we DON'T have 100% charge, jump immediately
-            if (this.jumpCharge < GAME_CONFIG.JUMP_CHARGE_MAX) {
-                this.player.setVelocityY(GAME_CONFIG.JUMP_VELOCITY);
-                this.player.setVelocityX(0);
-                this.player.isGrounded = false;
-                this.player.isRotating = false;
-                this.jumpHoldStartTime = null;
-            }
             return;
         }
         
-        // === CHECK IF HOLD OR TAP (WITH 100% ENERGY) ===
-        if (this.jumpHoldStartTime !== null && this.player.isGrounded) {
+        // === CHECK IF HELD PAST THRESHOLD ===
+        const isOnGround = this.player.isGrounded || timeSinceGrounded <= 100;
+        if (this.jumpHoldStartTime !== null && isOnGround && this.spaceKey.isDown) {
             const holdDuration = this.time.now - this.jumpHoldStartTime;
             
-            // If they released quickly - regular jump
-            if (Phaser.Input.Keyboard.JustUp(this.spaceKey)) {
-                if (holdDuration < 100) { // Quick tap = regular jump
+            if (holdDuration >= 100) {
+                // If have 100% charge - start charging
+                if (this.jumpCharge >= GAME_CONFIG.JUMP_CHARGE_MAX) {
+                    this.isChargingJump = true;
+                    this.chargeJumpTime = 0;
+                    this.jumpHoldStartTime = null;
+                    return;
+                } else {
+                    // Don't have 100% charge - do regular jump immediately
                     this.player.setVelocityY(GAME_CONFIG.JUMP_VELOCITY);
                     this.player.setVelocityX(0);
                     this.player.isGrounded = false;
                     this.player.isRotating = false;
+                    this.jumpHoldStartTime = null;
+                    return;
                 }
-                this.jumpHoldStartTime = null;
-                return;
             }
-            
-            // If they held past threshold - start charging
-            if (this.spaceKey.isDown && holdDuration >= 100) {
-                this.isChargingJump = true;
-                this.chargeJumpTime = 0;
-                this.jumpHoldStartTime = null;
-                return;
+        }
+        
+        // === CHECK IF RELEASED (QUICK TAP) ===
+        if (this.jumpHoldStartTime !== null && justUp) {
+            // Released - do regular jump (FREE)
+            const isOnGround = this.player.isGrounded || (this.time.now - this.lastGroundedTime) <= 100;
+            if (isOnGround) {
+                this.player.setVelocityY(GAME_CONFIG.JUMP_VELOCITY);
+                this.player.setVelocityX(0);
+                this.player.isGrounded = false;
+                this.player.isRotating = false;
+                // Don't use any energy for regular jump!
             }
+            this.jumpHoldStartTime = null;
+            return;
         }
     }
 
@@ -855,12 +872,20 @@ class CommitRunnerScene extends Phaser.Scene {
             
             // Remove obstacles that are off the left side of the screen
             if (obstacle.x < -GRID.TILE_FULL_SIZE * 2) {
+                // Remove from greenObstacles array
+                const index = this.greenObstacles.indexOf(obstacle);
+                if (index > -1) {
+                    this.greenObstacles.splice(index, 1);
+                }
                 obstacle.destroy();
             }
         });
         
         // Update world position tracking
         this.worldX += scrollAmount;
+        
+        // Clean up greenObstacles array - remove null or inactive references
+        this.greenObstacles = this.greenObstacles.filter(obstacle => obstacle && obstacle.active);
         
         // Generate new columns on the right side
         const rightEdge = this.cameras.main.width;
@@ -893,7 +918,8 @@ class CommitRunnerScene extends Phaser.Scene {
         for (let i = 0; i < this.greenObstacles.length; i++) {
             const obstacle = this.greenObstacles[i];
             
-            if (!obstacle.active) continue;
+            // Skip destroyed or inactive obstacles
+            if (!obstacle || !obstacle.active) continue;
             
             const obstacleTop = obstacle.y;
             const obstacleBottom = obstacle.y + GRID.TILE_SIZE;
@@ -906,6 +932,7 @@ class CommitRunnerScene extends Phaser.Scene {
             
             if (overlapsX && overlapsY) {
                 // There's a collision - resolve it
+                
                 const overlapLeft = playerRight - obstacleLeft;
                 const overlapRight = obstacleRight - playerLeft;
                 const overlapTop = playerBottom - obstacleTop;
@@ -953,8 +980,10 @@ class CommitRunnerScene extends Phaser.Scene {
             if (!wasGrounded) {
                 this.player.isGrounded = true;
                 this.player.isRotating = true;
+                this.lastGroundedTime = this.time.now; // Track landing time
             } else {
                 this.player.isGrounded = true;
+                this.lastGroundedTime = this.time.now; // Update grounded time
             }
         } else {
             this.player.isGrounded = false;
