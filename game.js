@@ -147,9 +147,6 @@ class CommitRunnerScene extends Phaser.Scene {
         this.restartText.setVisible(false);
         this.restartText.setDepth(100);
         
-        // Create jump charge gauge
-        this.createJumpChargeGauge();
-        
         // Set up overlap detection for side collisions only (not using collider at all)
         this.physics.add.overlap(
             this.player,
@@ -228,72 +225,6 @@ class CommitRunnerScene extends Phaser.Scene {
         // Track rotation state
         this.player.targetRotation = 0; // Target rotation to align with surface
         this.player.isRotating = false; // Whether actively rotating to align
-    }
-
-    /**
-     * Create the jump charge gauge display
-     */
-    createJumpChargeGauge() {
-        const gaugeWidth = 20;
-        const gaugeHeight = 120;
-        const gaugeX = this.cameras.main.width - 40;
-        const gaugeY = 60;
-        
-        // Background (empty gauge)
-        this.chargeGaugeBg = this.add.rectangle(
-            gaugeX,
-            gaugeY,
-            gaugeWidth,
-            gaugeHeight,
-            0xcccccc
-        );
-        this.chargeGaugeBg.setOrigin(0.5, 0);
-        this.chargeGaugeBg.setDepth(100);
-        this.chargeGaugeBg.setStrokeStyle(2, 0x000000);
-        
-        // Foreground (filled gauge)
-        this.chargeGaugeFill = this.add.rectangle(
-            gaugeX,
-            gaugeY + gaugeHeight,
-            gaugeWidth,
-            gaugeHeight,
-            0x40c463
-        );
-        this.chargeGaugeFill.setOrigin(0.5, 1);
-        this.chargeGaugeFill.setDepth(101);
-        
-        // Label
-        this.chargeGaugeLabel = this.add.text(
-            gaugeX,
-            gaugeY - 10,
-            'JUMP',
-            {
-                fontSize: '12px',
-                fill: '#000000',
-                fontFamily: 'monospace',
-                fontStyle: 'bold'
-            }
-        );
-        this.chargeGaugeLabel.setOrigin(0.5, 1);
-        this.chargeGaugeLabel.setDepth(100);
-        
-        // Store gauge dimensions for updates
-        this.gaugeMaxHeight = gaugeHeight;
-        this.gaugeBaseY = gaugeY + gaugeHeight;
-    }
-
-    /**
-     * Update the jump charge gauge display
-     */
-    updateJumpChargeGauge() {
-        const chargePercent = this.jumpCharge / GAME_CONFIG.JUMP_CHARGE_MAX;
-        const fillHeight = this.gaugeMaxHeight * chargePercent;
-        
-        // Update the height of the fill rectangle
-        this.chargeGaugeFill.displayHeight = fillHeight;
-        
-        // Also update the Y position to keep it aligned at the bottom
-        this.chargeGaugeFill.y = this.gaugeBaseY;
     }
 
     /**
@@ -614,9 +545,6 @@ class CommitRunnerScene extends Phaser.Scene {
         
         // Update score display
         this.scoreText.setText('Score: 0');
-        
-        // Update gauge display
-        this.updateJumpChargeGauge();
     }
 
     /**
@@ -658,9 +586,6 @@ class CommitRunnerScene extends Phaser.Scene {
         // Update score based on distance survived
         this.score += deltaSeconds * 10; // 10 points per second
         this.scoreText.setText(`Score: ${Math.floor(this.score)}`);
-        
-        // Update jump charge gauge display (every frame for smooth animation)
-        this.updateJumpChargeGauge();
         
         // Check if player fell off the bottom
         if (this.player.y > this.cameras.main.height + 50) {
