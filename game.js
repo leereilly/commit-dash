@@ -771,10 +771,11 @@ class CommitRunnerScene extends Phaser.Scene {
         // Only count as air jump if player has been off ground for more than 100ms (grace period)
         const timeSinceGrounded = this.time.now - this.lastGroundedTime;
         const isActuallyInAir = !this.player.isGrounded && timeSinceGrounded > 100;
+        const isMovingUp = this.player.body.velocity.y < 0; // Negative velocity = moving up
         
-        if (justDown && isActuallyInAir && 
+        if (justDown && isActuallyInAir && isMovingUp &&
             !this.isChargingJump && this.jumpCharge >= GAME_CONFIG.JUMP_CHARGE_COST) {
-            // Double jump - costs 50% energy
+            // Double jump - costs 50% energy (only works while moving upward)
             this.player.setVelocityY(GAME_CONFIG.JUMP_VELOCITY);
             this.player.setVelocityX(0);
             this.jumpCharge -= GAME_CONFIG.JUMP_CHARGE_COST;
