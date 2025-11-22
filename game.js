@@ -81,6 +81,10 @@ class CommitRunnerScene extends Phaser.Scene {
         this.jumpHoldStartTime = null; // Track when space was first pressed
         this.lastGroundedTime = 0; // Track when player last touched ground
         
+        // Jump buffering - track when jump was last pressed
+        this.jumpBufferTime = 0;
+        this.jumpBufferWindow = 100; // milliseconds to buffer jump input
+        
         // Load high score from cookie
         this.loadHighScore();
         
@@ -627,6 +631,8 @@ class CommitRunnerScene extends Phaser.Scene {
         this.colorWaveTime = 0; // Reset color wave
         this.isChargingJump = false; // Reset charge jump state
         this.chargeJumpTime = 0;
+        this.jumpBufferTime = 0; // Reset jump buffer
+        this.isSliding = false; // Reset sliding state
         
         // Reset player position
         this.player.setPosition(GAME_CONFIG.PLAYER_START_X, this.cameras.main.centerY);
@@ -718,6 +724,26 @@ class CommitRunnerScene extends Phaser.Scene {
         const justDown = Phaser.Input.Keyboard.JustDown(this.spaceKey);
         const justUp = Phaser.Input.Keyboard.JustUp(this.spaceKey);
         
+        // Buffer jump input - if they press jump, remember it for a short window
+        if (justDown) {
+            this.jumpBufferTime = this.time.now;
+        }
+        
+        // Check if we have a buffered jump input (pressed within last 100ms)
+        const hasBufferedJump = (this.time.now - this.jumpBufferTime) < this.jumpBufferWindow;
+        
+        // PREVENT ALL JUMPING WHILE SLIDING
+        if (this.isSliding) {
+            // Cancel any charge jump
+            if (this.isChargingJump) {
+                this.isChargingJump = false;
+                this.chargeJumpTime = 0;
+                this.player.setDisplaySize(GRID.TILE_SIZE, GRID.TILE_SIZE);
+            }
+            this.jumpHoldStartTime = null;
+            return;
+        }
+        
         // === CHARGE JUMP: SQUASHING PHASE ===
         if (this.isChargingJump && this.spaceKey.isDown && this.player.isGrounded) {
             this.chargeJumpTime += deltaSeconds;
@@ -785,8 +811,16 @@ class CommitRunnerScene extends Phaser.Scene {
             return;
         }
         
-        // === GROUND JUMPS: START TRACKING HOLD ===
-        if (justDown && (this.player.isGrounded || timeSinceGrounded <= 100) && !this.isChargingJump) {
+        // === GROUND JUMPS: START TRACKING HOLD OR USE BUFFERED INPUT ===
+        // Check if jump was pressed recently (justDown) OR if we have a buffered jump
+        const shouldAttemptGroundJump = (justDown || hasBufferedJump) && 
+                                        (this.player.isGrounded || timeSinceGrounded <= 100) && 
+                                        !this.isChargingJump;
+        
+        if (shouldAttemptGroundJump) {
+            // Clear the buffer since we're using it
+            this.jumpBufferTime = 0;
+            
             // If we DON'T have 100% charge, jump IMMEDIATELY for responsiveness
             if (this.jumpCharge < GAME_CONFIG.JUMP_CHARGE_MAX) {
                 this.player.setVelocityY(GAME_CONFIG.JUMP_VELOCITY);
