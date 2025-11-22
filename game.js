@@ -331,17 +331,20 @@ class CommitRunnerScene extends Phaser.Scene {
                     this.consecutiveEmptyColumns = 0;
                 }
                 
-                // Randomly create patterns of same-height columns
+                // MANDATORY: Always create at least 2 columns of the same height
+                // This ensures no standalone single columns
+                this.patternHeight = height;
+                this.patternColumnsRemaining = 1; // At least 1 more column of same height
+                
+                // Randomly extend the pattern to 3+ columns
                 // Frequency increases with difficulty
                 const patternChance = Phaser.Math.Between(1, patternMaxFreq);
                 if (patternChance <= 3) {
-                    // Create 2 columns of same height
-                    this.patternHeight = height;
-                    this.patternColumnsRemaining = 1; // 1 more column after this one
-                } else if (patternChance === patternMaxFreq) {
-                    // Create 3 columns of same height (rarer)
-                    this.patternHeight = height;
+                    // Extend to 3 columns of same height
                     this.patternColumnsRemaining = 2; // 2 more columns after this one
+                } else if (patternChance === patternMaxFreq) {
+                    // Extend to 4 columns of same height (rarer)
+                    this.patternColumnsRemaining = 3; // 3 more columns after this one
                 }
             }
         }
