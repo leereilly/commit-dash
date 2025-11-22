@@ -787,37 +787,37 @@ class CommitRunnerScene extends Phaser.Scene {
         
         // === GROUND JUMPS: START TRACKING HOLD ===
         if (justDown && (this.player.isGrounded || timeSinceGrounded <= 100) && !this.isChargingJump) {
+            // If we DON'T have 100% charge, jump IMMEDIATELY for responsiveness
+            if (this.jumpCharge < GAME_CONFIG.JUMP_CHARGE_MAX) {
+                this.player.setVelocityY(GAME_CONFIG.JUMP_VELOCITY);
+                this.player.setVelocityX(0);
+                this.player.isGrounded = false;
+                this.player.isRotating = false;
+                return;
+            }
+            
+            // If we have 100% charge, start tracking hold for potential charge jump
             this.jumpHoldStartTime = this.time.now;
             return;
         }
         
-        // === CHECK IF HELD PAST THRESHOLD ===
+        // === CHECK IF HELD PAST THRESHOLD (WITH 100% CHARGE) ===
         const isOnGround = this.player.isGrounded || timeSinceGrounded <= 100;
         if (this.jumpHoldStartTime !== null && isOnGround && this.spaceKey.isDown) {
             const holdDuration = this.time.now - this.jumpHoldStartTime;
             
-            if (holdDuration >= 100) {
-                // If have 100% charge - start charging
-                if (this.jumpCharge >= GAME_CONFIG.JUMP_CHARGE_MAX) {
-                    this.isChargingJump = true;
-                    this.chargeJumpTime = 0;
-                    this.jumpHoldStartTime = null;
-                    return;
-                } else {
-                    // Don't have 100% charge - do regular jump immediately
-                    this.player.setVelocityY(GAME_CONFIG.JUMP_VELOCITY);
-                    this.player.setVelocityX(0);
-                    this.player.isGrounded = false;
-                    this.player.isRotating = false;
-                    this.jumpHoldStartTime = null;
-                    return;
-                }
+            // If held past 150ms with 100% charge - start charging
+            if (holdDuration >= 150) {
+                this.isChargingJump = true;
+                this.chargeJumpTime = 0;
+                this.jumpHoldStartTime = null;
+                return;
             }
         }
         
-        // === CHECK IF RELEASED (QUICK TAP) ===
+        // === CHECK IF RELEASED QUICKLY (WITH 100% CHARGE) ===
         if (this.jumpHoldStartTime !== null && justUp) {
-            // Released - do regular jump (FREE)
+            // Released quickly - do regular jump (FREE)
             const isOnGround = this.player.isGrounded || (this.time.now - this.lastGroundedTime) <= 100;
             if (isOnGround) {
                 this.player.setVelocityY(GAME_CONFIG.JUMP_VELOCITY);
